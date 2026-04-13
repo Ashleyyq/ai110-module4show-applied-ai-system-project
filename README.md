@@ -17,17 +17,65 @@ Replace this paragraph with your own summary of what your version does.
 
 ## How The System Works
 
+Real-world recommenders like Spotify actually use two big approaches: collaborative filtering, which looks at what other users with similar taste are listening to, and content-based filtering, which looks at the song itself, things like how energetic it is, what genre it belongs to, or how "happy" it sounds. Spotify actually combines both, but for this project I focused on content-based filtering because it is easier to reason about and does not require data from other users.
+
 Explain your design in plain language.
 
 Some prompts to answer:
 
 - What features does each `Song` use in your system
   - For example: genre, mood, energy, tempo
+  - My `Song` objects use five features: `genre` (e.g. pop, lofi, rock), `mood` (e.g. happy, chill, intense), `energy` (a float from 0.0 to 1.0 measuring intensity), `acousticness` (how acoustic vs. electronic the track is), and `valence` (how musically positive or happy it sounds). I left out `tempo_bpm` and `danceability` because they turned out to be redundant with energy for this small dataset.
+
 - What information does your `UserProfile` store
+  - The `UserProfile` stores four things: `favorite_genre`, `favorite_mood`, `target_energy` (a float representing the energy level the user wants), and `likes_acoustic` (a boolean for whether they prefer acoustic music). These map directly to the song features so the scorer can compare them one-to-one.
+
 - How does your `Recommender` compute a score for each song
+  - The scorer gives each song a number out of 9.0. Genre and mood matches give flat bonuses (genre is worth more at 3.0 vs. mood at 2.0, because a wrong genre feels the most "off" no matter what). The three numeric features use a proximity formula `1 - |song value - user target|` so songs closer to the user's preference always score higher, not songs that are simply louder or faster. Energy is weighted at 2.0 since it has the widest spread in the dataset; acousticness and valence are each weighted at 1.0 as tiebreakers.
+
 - How do you choose which songs to recommend
+  - Once every song has a score, the ranking step sorts the full list from highest to lowest and returns the top k results. I kept scoring and ranking as two separate steps on purpose, the scorer only looks at one song at a time and produces a number, while the ranker sees the whole list and decides what to actually show the user.
 
 You can include a simple diagram or bullet list if helpful.
+
+See [flowchart.md](flowchart.md) for the full data flow diagram (Input → Process → Output).
+
+---
+
+### Finalized Algorithm Recipe
+
+Every song gets a score out of **9.0 points**, calculated in two layers:
+
+**Layer 1 — Categorical matches (max 5.0)**
+
+| Signal | Points | Why this weight |
+|--------|--------|----------------|
+| Genre matches user's favorite genre | +3.0 | A wrong genre feels broken regardless of how well other features match, it gets the highest weight |
+| Mood matches user's favorite mood | +2.0 | Same genre can serve very different moments; mood captures context genre alone can't |
+
+**Layer 2 — Numeric proximity (max 4.0)**
+
+Each feature uses the formula `(1 - |song value - user target|) × weight`, so songs closer to the user's preference always score higher, not songs that are simply louder or faster.
+
+| Signal | Weight | Max pts | Why this weight |
+|--------|--------|---------|----------------|
+| Energy proximity | ×2.0 | 2.0 | Widest spread in the dataset (0.22–0.97); most discriminating numeric feature |
+| Acousticness proximity | ×1.0 | 1.0 | Maps directly to the `likes_acoustic` boolean in the user profile |
+| Valence proximity | ×1.0 | 1.0 | Most emotionally independent signal; inferred from the user's favorite mood |
+
+A song that matches both genre and mood starts with 5.0 points before any numeric scoring, meaning a wrong-genre song can never outscore a correct-genre song purely through numeric similarity (max 4.0). This was a deliberate design choice.
+
+---
+
+### Potential Biases
+
+- **Genre over-prioritization:** Because genre carries 3.0 points, a song from the right genre will almost always outrank a song from a different genre, even if the other song matches the user's mood, energy, and acousticness perfectly. A great ambient song could be invisible to a pop user even if it fits their energy target exactly.
+
+- **Mood-valence inference is imprecise:** Valence is inferred from the user's favorite mood using a fixed lookup table rather than being set explicitly. For moods like "intense" where Storm Runner (valence 0.48) and Gym Hero (valence 0.77) are both valid but feel emotionally very different, the inferred target (0.60) splits the difference and treats both songs as roughly equal, which may not match what the user actually wants.
+
+- **No history or feedback:** The system treats every session identically. It has no memory of what the user has already heard, skipped, or loved. A song that scored highly last time will score the same way every time, even if the user is tired of it.
+
+- **Small catalog amplifies errors:** With only 18 songs, a single wrong weight can put the wrong song at rank 1. In a real system with thousands of songs, a slightly miscalibrated weight averages out, here it does not.
 
 ---
 
@@ -73,6 +121,18 @@ Use this section to document the experiments you ran. For example:
 - What happened when you changed the weight on genre from 2.0 to 0.5
 - What happened when you added tempo or valence to the score
 - How did your system behave for different types of users
+
+### Sample Output — pop/happy profile
+
+Running `python -m src.main` with the `pop_dancer` profile (genre=pop, mood=happy, energy=0.85, acoustic=no):
+
+![Terminal output showing top 5 recommendations for a pop/happy user profile](Screenshot%202026-04-12%20at%2010.26.30%20PM.png)
+
+The results match expectations:
+- **#1 Sunrise City** — only song with both genre (`pop`) and mood (`happy`) matching, scores 8.72 / 9.0
+- **#2 Gym Hero** — genre matches (`pop`) but mood is `intense` not `happy`, drops to 6.76
+- **#3 Rooftop Lights** — mood matches (`happy`) but genre is `indie pop` not `pop`, sits at 5.46 — confirming genre (weight 3.0) outranks mood (weight 2.0) as designed
+- **#4 and #5** — no categorical matches at all, ranked purely by energy and acousticness proximity
 
 ---
 
