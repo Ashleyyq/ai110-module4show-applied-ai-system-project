@@ -1,209 +1,172 @@
-# 🎧 Model Card: Music Recommender Simulation
+# Model Card: VibeFinder 2.0
 
-## 1. Model Name  
-
-Give your model a short, descriptive name.  
-Example: **VibeFinder 1.0**  
-
-**VibeFinder 1.0**
-
-A content-based music recommender that scores songs against a user taste profile and returns the top matches from a small catalog.
+**Module 4 Final Project, CodePath AI 110**  
+Author: Ashley Qu
 
 ---
 
-## 2. Intended Use  
+## 1. Model Name
 
-Describe what your recommender is designed to do and who it is for. 
+**VibeFinder 2.0**: a rule-based music recommender packaged as a multi-stage agent. It is an extension of VibeFinder 1.0 (my Module 3 project), which was a content-based scorer without any agentic layer.
 
-Prompts:  
+## 2. Intended Use
 
-- What kind of recommendations does it generate  
-- What assumptions does it make about the user  
-- Is this for real users or classroom exploration  
+This system is a classroom / portfolio demonstration of applied AI concepts, not a consumer product. The target use case is showing how four building blocks (input parsing, retrieval-scored recommendations, RAG-enhanced explanations, and rule-based self-critique with retry) can be composed into an agentic pipeline that is observable, testable, and honest about its limitations.
 
-VibeFinder is designed for classroom exploration only. It is not a real product and should not be used to make recommendations for actual users.
+It is not intended for:
 
-It takes a user's favorite genre, favorite mood, target energy level, and whether they like acoustic music. Then it scores every song in the catalog against those preferences and returns the top 5 matches with a plain-language explanation for each one.
+- Real listener-facing music discovery. The catalog has only 18 songs.
+- Any setting where music recommendation might meaningfully influence emotional state (see Misuse Potential).
+- Production deployment, because the "agent" is deterministic rule-based logic hand-tuned against a small dataset.
 
-It assumes the user already knows what genre and mood they want, and that their taste does not change between sessions. It should NOT be used for real music recommendations, for users with complex or changing taste, or as a replacement for platforms like Spotify or Apple Music.
+## 3. How It Works (Short)
 
----
+A user request flows through five stages:
 
-## 3. How the Model Works  
+1. **Parser** accepts either a structured dict (`favorite_genre`, `favorite_mood`, `target_energy`, `likes_acoustic`) or a free-form English query like `"chill lofi for studying"`. Input guardrails reject malformed input (energy outside [0, 1], unknown moods, missing required fields).
 
-Explain your scoring approach in simple language.  
+2. **Retriever** (the Module 3 baseline scorer, retained as-is) computes a 0 to 9 score for each of the 18 songs. Genre match contributes +3.0, mood match contributes +2.0, plus weighted numeric proximity on energy (×2.0), acousticness (×1.0), and valence (×1.0).
 
-Prompts:  
+3. **Explainer** generates a prose explanation for each top-5 recommendation. In RAG mode, it injects hand-written `song_notes` from `data/songs.csv` and `mood_guide` content from `data/mood_guides.csv` into the output.
 
-- What features of each song are used (genre, energy, mood, etc.)  
-- What user preferences are considered  
-- How does the model turn those into a score  
-- What changes did you make from the starter logic  
+4. **Self-Critic** runs four rule-based checks on the top-5 (`mood_valence_conflict`, `missing_genre`, `acoustic_violation`, `low_diversity`). Retryable failures trigger a rerank pass.
 
-Avoid code here. Pretend you are explaining the idea to a friend who does not program.
+5. **Rerank** applies the Critic's hints (soft valence / diversity penalties; hard acoustic filter) to the full candidate pool and returns a new top-5. Maximum 1 retry. Residual issues are surfaced to the user, not suppressed.
 
-Every song in the catalog gets a score based on how well it matches the user. The scoring works in two layers.
+No LLM is involved. The entire chain is deterministic.
 
-The first layer checks for exact matches on genre and mood. A genre match is worth 3 points and a mood match is worth 2 points. Genre is worth more because getting the genre wrong feels the most off to a listener, even if everything else is right.
+## 4. Data
 
-The second layer looks at numbers. For energy, the system checks how far the song's energy is from the user's target and awards up to 2 points (closer is always better, not louder or faster). For acousticness it does the same thing for up to 1 point. For valence, which measures how happy or dark a song sounds, the system guesses the target based on the user's favorite mood and awards up to 1 point.
+### Song catalog (18 songs)
+`data/songs.csv`. Each row has 11 columns: `id`, `title`, `artist`, `genre`, `mood`, `energy`, `tempo_bpm`, `valence`, `danceability`, `acousticness`, and (new in Module 4) `song_notes`. The first 10 columns are inherited from Module 3 unchanged. `song_notes` is a 1 to 2 sentence handwritten description I wrote for each song (e.g. "Driving guitars with no quiet moments. A straight shot of adrenaline for workouts where you'd rather not think.").
 
-The maximum score is 9.0. Once every song has a score, the system sorts them and returns the top 5. A song with the right genre and mood starts with up to 5 points before any numbers are even checked, so it almost always wins.
+Genres represented: pop, lofi, rock, ambient, jazz, synthwave, hip-hop, classical, r&b, metal, folk, edm, soul, reggae, indie pop. Most genres appear in only one song.
 
-The main change from the starter logic was adding valence and acousticness to the scoring, and raising the genre weight from 2.0 to 3.0 after testing showed that a 2:1 ratio between genre and mood did not create enough separation between candidates.
+Moods represented: happy, chill, intense, focused, energetic, moody, relaxed, romantic, melancholic, angry, nostalgic, euphoric, sad, uplifting.
 
----
+### Mood guides (14 entries, new in Module 4)
+`data/mood_guides.csv`. A short context blurb for each mood label describing what that mood family typically sounds like and what situation it fits (e.g. for "chill": "Low-to-medium energy with a settled valence. Aim is to lower stimulation not to entertain.").
 
-## 4. Data  
+Both CSV files are regenerated deterministically from `build_data.py`, which keeps the RAG corpus versioned alongside the code.
 
-Describe the dataset the model uses.  
+### Whose taste is this catalog?
+Mostly mine. I picked songs that I thought had distinctive enough features (specific genre, mood, energy) to test scoring behavior. This is a bias baked into the data: the "right" recommendation is defined by my personal sense of match quality, and that definition is not universal.
 
-Prompts:  
+## 5. Strengths
 
-- How many songs are in the catalog  
-- What genres or moods are represented  
-- Did you add or remove data  
-- Are there parts of musical taste missing in the dataset  
+- **Deterministic and reproducible.** Anyone cloning the repo can run everything and get the same output. No API keys, no inference costs, no stochastic behavior.
 
-The catalog has 18 songs. It started with 10 from the project starter and I added 8 more to cover genres and moods that were missing.
+- **Observable reasoning.** Every stage of the agent emits `[PARSER] [SCORER] [CRITIC] [AGENT]` log lines, so a reader can see exactly what the agent decided and why. This is important because the "agentic" aspect of the system is supposed to be legible, not hidden.
 
-Each song has 10 attributes: id, title, artist, genre, mood, energy, tempo, valence, danceability, and acousticness. For scoring I only use genre, mood, energy, acousticness, and valence. Tempo and danceability were left out because they were redundant with energy in this small dataset.
+- **Honest about its own limits.** The Critic's 1-retry cap plus residual-issue surfacing means the system does not pretend to solve self-contradictory user profiles. Profile D (sad + EDM + non-acoustic + high-energy is not jointly satisfiable in an 18-song catalog) is the best test of this: after retry, the agent reports exactly what trade-off it chose.
 
-The 18 songs cover 15 genres (pop, lofi, rock, jazz, ambient, synthwave, hip-hop, classical, r&b, metal, folk, EDM, soul, reggae, indie pop) and 14 moods (happy, chill, intense, relaxed, moody, focused, energetic, melancholic, romantic, angry, nostalgic, euphoric, sad, uplifting).
+- **Measurable RAG impact.** The dual-mode Explainer combined with `evaluate.py` produces a clean before/after comparison. RAG explanations are +104% longer and have +102% more unique vocabulary on average than baseline, and 100% of RAG outputs contain retrieval-sourced content versus 0% of baseline outputs.
 
-What is missing: 13 of the 15 genres have only one song, so there is almost no variety within a genre. Only 2 songs out of 18 have a mid-range energy between 0.5 and 0.7. The data also does not include lyrics, language, release year, or cultural context, and it mostly reflects one person's taste choices rather than a wide range of listeners.
+## 6. Limitations and Bias
 
----
+- **Small catalog amplifies ranking errors.** With 18 songs and only one or two songs per genre, a single weight tuning decision can swing rankings. In a real system with thousands of candidates, minor miscalibrations average out; here they dominate.
 
-## 5. Strengths  
+- **Genre over-prioritization.** Because genre match is worth +3.0 (out of 9), a wrong-genre song almost never wins even when every other feature is a perfect match. This is a Module 3 bias that actually motivated building the Critic in the first place.
 
-Where does your system seem to work well  
+- **Valence targets are inferred from mood labels, not asked directly.** The lookup table treats "intense" as valence ≈ 0.6, but Storm Runner (valence 0.48) and Gym Hero (valence 0.77) feel emotionally very different even though both are tagged "intense". The system cannot distinguish.
 
-Prompts:  
+- **"Silence means False" in the NL parser.** If a query doesn't explicitly mention acoustic preference, the parser defaults `likes_acoustic=False`. The downstream Critic then enforces that default. Result: `"chill lofi for studying"` produces a non-acoustic recommendation set, even though many people saying "chill lofi" probably want something acoustic-leaning. This is a real limitation of rule-based NLU: default values can't reflect unstated intent.
 
-- User types for which it gives reasonable results  
-- Any patterns you think your scoring captures correctly  
-- Cases where the recommendations matched your intuition  
+- **Handwritten corpus bakes in my voice.** The `song_notes` and `mood_guides` are mine. They lean on a specific English register (images like "festival-main-stage drops", "library rain", "11pm freeway stretches") that won't translate equally across cultures or musical backgrounds. A different corpus author would produce a different "feel" of recommendation, even with identical scoring.
 
-The system works best when the user's preferences line up clearly with what is in the catalog. For users who like lofi, the results felt the most natural: three lofi songs filled the top 3 with the right moods in the right order.
+- **No memory, no feedback.** The same query produces the same output forever. The system has no sense of novelty, repetition fatigue, or what the user liked last time.
 
-The scoring is also easy to understand and explain. Every recommendation comes with a list of reasons showing exactly which features matched and how many points each contributed. A user can trace exactly why a song was recommended.
+- **Critic thresholds were tuned against the existing 6 test profiles.** The numbers (valence gap > 0.4 triggers conflict, acoustic gap > 0.5 triggers violation, top-5 with ≥4/5 same genre is "low diversity") were picked so the test cases behave as expected. On profiles with different edge cases, these thresholds may fire spuriously or miss real issues.
 
-The system separates very different users well. When comparing the rock fan and the lofi listener, not a single song appeared in both top-5 lists because the energy gap between those two profiles is large enough to pull the results completely apart.
+## 7. Misuse Potential
 
-The results are also stable and predictable, which made testing straightforward. Running the same profile twice always gives the same result.
+The system itself has a narrow attack surface (deterministic, closed catalog, no user-generated content). But a few ways it could go wrong in a hypothetical deployment:
 
----
+- **Emotional reinforcement.** The system can recommend music matching any mood, including sad. If a listener is already in a low emotional state, optimally matching that state is not necessarily helpful. A real product would need at minimum a check for patterns suggesting distress, and optionally an "offer uplifting alternative" mode. VibeFinder 2.0 does neither.
 
-## 6. Limitations and Bias 
+- **Scale amplifies the handwritten-corpus bias.** At 18 songs my voice is obvious (and the Module 3 docs openly caveat this). At 18,000 songs the same handwritten-corpus tone would be less visible but would still shape which artists and genres get described most compellingly. Applied to a commercial catalog, this would quietly favor certain types of music.
 
-Where the system struggles or behaves unfairly. 
+- **Adversarial inputs could force weird fallbacks.** The NL parser fills in defaults when it cannot extract a genre or mood keyword. A user typing a genuine-looking query outside the parser's vocabulary could get a confusing recommendation that still looks authoritative. Guardrails catch only the extreme case where both genre and mood are unrecognized.
 
-Prompts:  
+The most important preventive measure is the one already in the system: the Critic is designed to surface problems rather than silently paper over them. If the system cannot meet the user's constraints, it says so.
 
-- Features it does not consider  
-- Genres or moods that are underrepresented  
-- Cases where the system overfits to one preference  
-- Ways the scoring might unintentionally favor some users
+## 8. Evaluation
 
-The biggest weakness I found is what I am calling the "one-song genre trap." Because 13 out of 15 genres in the catalog only have a single song, the genre bonus (+3.0 points) basically guarantees that the same song will always come out on top for any user whose favorite genre matches, no matter what else they prefer. For example, when I tested a user who likes rock music but also wants acoustic songs, the system still recommended Storm Runner as the #1 result even though Storm Runner scored almost zero on acousticness, because the genre and mood bonuses together were just too high to overcome. This means the system creates a filter bubble where certain users will get the exact same recommendation every single time with no variety at all, which is the opposite of what a good recommender should do. I also found a mid-energy dead zone in the data: only 2 out of 18 songs have an energy level between 0.5 and 0.7, so users who prefer moderate-energy music are basically ignored by the scoring because there is nothing close to their target in the catalog. If I were to fix this, I would either add more songs per genre so the numeric features actually get a chance to separate candidates, or I would lower the genre weight so that emotional signals like mood and valence have more influence over the final ranking.  
+`evaluate.py` is the main evaluation harness. It runs two things end-to-end.
 
----
+**Behavioral assertions (8 test cases).** Each case specifies expected behavior (`success`, `retried`, and required `first_critique` issue codes). Current status:
 
-## 7. Evaluation  
+```
+Total: 8 / 8 passed
+```
 
-How you checked whether the recommender behaved as expected. 
+The tests cover: 3 standard profiles (A/B/C), 3 adversarial profiles targeting specific Critic rules (D/E/F), one natural-language query (G), and one guardrail-reject case (H).
 
-Prompts:  
+**RAG vs baseline comparison (6 profiles × 2 modes).** For each profile the harness runs the agent once with `use_rag=True` and once with `use_rag=False`, then reports aggregates:
 
-- Which user profiles you tested  
-- What you looked for in the recommendations  
-- What surprised you  
-- Any simple tests or comparisons you ran  
+| Metric | Baseline | RAG | Δ |
+|---|---|---|---|
+| Avg explanation length (words) | 34.9 | 71.0 | +104% |
+| Unique vocab tokens | 71.7 | 145.0 | +102% |
+| Recs referencing song_notes | 0% | 100% | |
+| Recs referencing mood_guides | 0% | 100% | |
 
-No need for numeric metrics unless you created some.
+Per-profile length deltas range from +92% (Profile E) to +118% (Profile B), which I read as RAG's value being consistent rather than driven by one outlier.
 
-I tested six different user profiles to see whether the recommender gave results that actually made sense. Three of them were "standard" profiles with preferences that match songs in the catalog well: a high-energy rock fan, a chill lofi listener, and an upbeat pop dancer. The other three were designed to be tricky on purpose, including a user who wanted sad EDM, a user who listed a genre that does not exist in the catalog at all (country), and a user who likes rock but also wants acoustic music.
+**What the test harness caught during development.** A duplicate `score_song` definition at the bottom of `recommender.py` was silently shadowing the real scoring function. My original Module 3 tests did not catch it because the tests imported dead OOP classes, while the live code path used procedural functions. `evaluate.py` calls the full pipeline end-to-end, so a shadowed stub would have crashed on the first run.
 
-For the standard profiles the results felt right almost every time. The lofi listener got three lofi songs in a row at the top, and the pop dancer's number one pick was Sunrise City, which is the only song that matches both pop genre and happy mood at the same time.
+**What it did not catch.** The NL parser's "silence means False" behavior on acoustic preference. The system is internally consistent (the default is applied end-to-end), so all behavioral tests pass, but the result may not match user intent when the query is ambiguous. This is a limit of rule-based NLU rather than a test gap, but it's worth flagging.
 
-The results that surprised me most came from the tricky profiles. The sad EDM user got Drop Zone, which is a euphoric high-energy track, as the top result because the genre matched. The system had no way to understand that a sad person probably does not want a euphoric song because the genre bonus was strong enough to override the mood signal completely. The acoustic rocker also surprised me: even though that user said they like acoustic music, Storm Runner (one of the least acoustic songs in the catalog) still came in at number one because genre and mood together gave it too many points to lose. I also ran a weight experiment where I cut the genre bonus in half and doubled the energy weight, but the same songs mostly came out on top anyway, which showed me the real problem is not the weights but how few songs exist per genre.
+## 9. What Surprised Me
 
----
+**How much a rule chain can feel like "reasoning".** When the Critic fires, logs `mood_valence_conflict → retry with valence_penalty_weight=5.0`, then returns a visibly different top-5, it reads as if the system "thought" about the problem. There is no thinking happening. It's four `if` statements and a weight multiplication. The appearance of agency is created by the sequencing of the decision points and the visibility of the logs, not by any actual intelligence. I think this helps explain why people overtrust LLM agents: if a system can show its work in a plausible sequence, it looks smarter than it is.
 
-### Profile Pair Comparisons
+**Rules force honesty in a way LLMs may not.** The Profile D residual-issue case is the clearest example. The user's profile is mutually unsatisfiable (sad + EDM + non-acoustic + high-energy can't coexist in the 18-song catalog), and a rule-based system has no vocabulary for papering this over. It has to report the trade-off. An LLM in the same situation might produce confident, fluent, and subtly wrong explanation text. My rule chain can only output what it actually has.
 
-**Profile A (rock/intense) vs Profile B (lofi/chill)**
+**Testing coverage is a lie you tell yourself until you actually run the tests.** My Module 3 `tests/` folder had test files that imported unfinished OOP classes (`Song`, `UserProfile`, `Recommender` with stubbed methods) while the live code path was completely separate procedural functions. The tests were testing dead code. `pytest` had literally never run successfully during Module 3 and I didn't notice because I never ran it. Having tests in the repo is not the same as having a tested system. I won't make this mistake again.
 
-These two profiles are basically complete opposites, and the recommendations reflected that clearly. Profile A got Storm Runner at the top with a score of 8.72, while Profile B got Library Rain at 8.80. What is interesting is that not a single song appeared in both top-5 lists. The system is doing its job of separating users with very different tastes, and it makes sense because energy is the most powerful numeric signal: rock songs score near zero for a chill listener, and lofi songs score near zero for a rock fan.
+**A mundane technical surprise: macOS inserts narrow no-break space in screenshot filenames.** When I tried to reorganize my Module 3 screenshot files into `docs/module_3_screenshots/`, `git mv` refused with "bad source" even though the file clearly existed on disk. Turns out the "space" between "10.26.30" and "PM" in the file names is U+202F (narrow no-break space), not U+0020 (regular space). macOS's screenshot utility inserts it automatically. This ate 20 minutes of the final documentation step and also surfaced a flawed AI suggestion downstream (see section 10).
 
-**Profile B (lofi/chill) vs Profile C (pop/happy)**
+## 10. AI Collaboration
 
-Both of these feel like "positive" or "feel-good" profiles, but they ended up with completely different results. Profile B got calm acoustic songs, while Profile C got bright energetic ones. Even though both users might be in a good mood, the energy target (0.38 vs 0.85) is so different that the scoring pulls their results apart. This is a good example of how the numeric features help separate users even when their mood labels sound similar.
+I used Claude (Anthropic) extensively throughout this project as a collaborator on design decisions, code review, and debugging. The collaboration was structured as an ongoing chat with shared context, including a `PROJECT_NOTES.md` document where I kept a running record of decisions and AI suggestions (both good and bad) as we went. I think that shared context mattered more than any individual prompt. Claude could re-check what I'd already decided before proposing something new.
 
-**Profile C (pop/happy) vs Profile D (sad/energetic EDM)**
+### A helpful AI suggestion
 
-This comparison shows where the system breaks down. Profile C got Sunrise City at number one, which feels right for a happy pop fan. But Profile D, a user who said their mood is "sad," got Drop Zone, which is a euphoric EDM track. The reason is that Drop Zone's genre matched (edm) and that was worth 3.0 points, while the valence mismatch between a sad mood and a euphoric song only cost about 0.54 points. So the system recommended an emotionally wrong song because it was looking at genre identity more than emotional fit. A real person would find this recommendation strange.
+Early in the project, I shared my Module 3 `recommender.py` with Claude before we started extending it. Claude immediately noticed that `score_song` was defined twice in the file: a working implementation around line 70 with full scoring logic, and a stub at line 136 that returned `[]`. Because Python's later definition silently overrides the earlier one, the stub was shadowing the real function. This meant `recommend_songs()` was actually calling the stub and would crash at the tuple-unpacking step with `ValueError: not enough values to unpack (expected 2, got 0)`.
 
-**Profile D (sad/energetic) vs Profile F (acoustic rocker)**
+I had not noticed this before. My Module 3 project shipped with the bug because the tests I wrote targeted the unfinished OOP class, not the procedural function path the app actually used. If we had started building the Module 4 agent on top of this broken base, my first run of the new pipeline would have blown up with a misleading error, and I would have spent hours debugging the symptom instead of finding the cause.
 
-Both of these are adversarial profiles, but they fail in slightly different ways. Profile D shows that genre can override emotional mood, while Profile F shows that genre can override a physical sound preference like acousticness. In both cases the genre and mood bonuses together create a ceiling that numeric features cannot break through. The difference is that Profile D's problem is about recommending the wrong feeling, and Profile F's problem is about recommending the wrong sound texture. Both point to the same root cause: the categorical weights are too strong relative to the numeric ones when the catalog is small.
+The catch wasn't because Claude ran my code (it didn't have access). It was because Claude read the whole file carefully and noticed the duplicated `def score_song` pattern, which I had stopped seeing because I'd been staring at that code for weeks.
 
-**Profile A (rock/intense) vs Profile F (acoustic rocker)**
+### A flawed AI suggestion
 
-These two profiles have the same favorite genre and mood, but Profile F added likes_acoustic equal to True. Looking at the results, the top two songs are identical in both profiles (Storm Runner at number one, Gym Hero at number two), which means the acoustic preference had basically no effect on the ranking. This is the clearest evidence that the acousticness weight (1.0) is not strong enough to change outcomes when genre and mood already create such a large score advantage for the same songs.
+When I finished writing the new `README.md` and the `docs/MODULE_3_ORIGINAL.md` file, Claude included URL-encoded image paths like `module_3_screenshots/Screenshot%202026-04-12%20at%2010.26.30%20PM.png` in the markdown. When I pushed to GitHub, none of the 7 embedded screenshots rendered. They all showed as broken image icons.
 
----
+The cause was that `%20` (URL-encoded regular space, U+0020) was wrong for these specific files. My macOS screenshots had file names containing narrow no-break space (U+202F) between "10.26.30" and "PM", which URL-encodes to `%E2%80%AF`. Claude's generated markdown silently assumed all "spaces" in the file names were regular spaces. The generated paths looked correct but resolved to files that didn't exist on the filesystem.
 
-### Why Gym Hero Keeps Showing Up for Happy Pop Users
+This is a small concrete example of a category of AI failure: confidently-written output based on a plausible but wrong assumption about external state. The markdown was syntactically perfect; it just pointed at the wrong files. Claude had no way to check the actual byte content of the filenames without running something, and neither did I until GitHub's image renderer told me.
 
-Gym Hero is a workout pop song with a loud, intense feel, but it still shows up at number two for users who ask for happy pop music. The reason is that the scoring system only knows Gym Hero is a pop song, and matching the genre earns 3.0 points automatically. The system does not know the difference between "happy pop" and "gym pop" the way a human would. It sees that both are pop, gives Gym Hero the full genre bonus, and then ranks it above everything else that is not pop, even if those other songs feel more genuinely happy. The only thing stopping Gym Hero from being number one is that Sunrise City matches both genre and mood while Gym Hero only matches genre. This is a good example of how a scoring system can be technically correct but still feel off to a real listener.
+The fix was a one-line `sed` command (`s/%20PM/%E2%80%AFPM/g`), but it took a GitHub round-trip to even discover, which cost me real time near the end of the project.
 
----
+### Other collaboration observations
 
-## 8. Future Work  
+The collaboration worked best when I had a specific question (catch this bug, is this design sound, does this rubric item require X) and worst when I was under-specific. When Claude lacked context about what I had already tried or already decided against, it sometimes re-proposed things we had previously closed. The running `PROJECT_NOTES.md` helped with this. Claude could read it at the start of each session and know not to re-litigate settled questions.
 
-Ideas for how you would improve the model next.  
+I also noticed Claude's suggestions were more grounded when it could actually run code (it ran `evaluate.py` in its isolated environment to verify RAG metrics before reporting them back to me) than when it had to reason about runtime behavior from static code. The URL-encoding miss falls in the second category: no code was executed, just markdown was generated, and the wrong-ness wasn't checkable until push time.
 
-Prompts:  
+## 11. Future Work
 
-- Additional features or preferences  
-- Better ways to explain recommendations  
-- Improving diversity among the top results  
-- Handling more complex user tastes  
+If I were to continue this project, roughly in priority order:
 
-First, I would add more songs per genre. Right now 13 out of 15 genres have only one song, which means the genre bonus has nothing to compete against inside a genre. Adding even 3 or 4 songs per genre would let the numeric features like energy and acousticness actually matter for separating candidates.
+1. **Extend the catalog.** 18 songs is too small for the genre bonus to behave sensibly. 200 to 300 songs with proper per-genre variety would be enough to test whether the scoring formula generalizes.
 
-Second, I would add an explicit valence preference to the user profile instead of guessing it from mood. The current approach uses a fixed lookup table, but the sad EDM test showed that mood and emotional valence are not always the same thing. Letting users say directly how happy or dark they want the music to feel would make the scoring more accurate for edge cases.
+2. **Replace the NL parser's default-False behavior with an explicit "unspecified" tri-state.** Right now silence on acoustic preference becomes `False`, which is wrong. The parser should emit `likes_acoustic=None` and the scorer should skip that term entirely rather than scoring against `target=0.0`.
 
-Third, I would add a diversity rule to the ranking step so the same genre or artist cannot appear more than twice in a top-5 list. Right now a lofi fan gets three lofi songs back to back, which is technically correct but does not expose them to anything new. A simple cap on repeating genres would make the results feel less like a filter bubble.
+3. **Learn the scoring weights from user feedback.** Current weights (genre 3.0, mood 2.0, etc.) are hand-tuned against my intuition about what "feels right". A small feedback loop (thumbs up / thumbs down per recommendation) could tune these per user.
 
----
+4. **More Critic rules.** The current four are the ones that made sense against my 6 test profiles. Other useful ones: "top-5 all have very similar energy", "user's energy target is unusually extreme versus the catalog distribution", "recommendations don't span the mood family's full valence range".
 
-## 9. Personal Reflection  
+5. **Try a small LLM-powered variant for the Explainer stage only.** The current RAG explainer is template-based; a local small model (via ollama or similar) could produce more natural prose while keeping the rest of the pipeline rule-based and reproducible. Scoring and Critic should stay deterministic.
 
-A few sentences about your experience.  
-
-Prompts:  
-
-- What you learned about recommender systems  
-- Something unexpected or interesting you discovered  
-- How this changed the way you think about music recommendation apps  
-
-**What was your biggest learning moment during this project?**
-
-My biggest learning moment was running the weight shift experiment. I expected that cutting the genre weight in half and doubling the energy weight would fix the problems I found in the adversarial profiles, but the rankings barely changed at all. That was the moment I realized the issue was never about the weights. It was about the catalog being too small. When only one rock song exists, Storm Runner will always win for a rock fan no matter what the weights say. I had been thinking about the problem the wrong way the whole time, and the experiment forced me to see that. Before I can tune weights meaningfully, I need more data.
-
-**How did using AI tools help you, and when did you need to double-check them?**
-
-AI tools helped me most during the design phase. When I was trying to figure out which features to include and how to weight them, being able to talk through the reasoning and see the math worked out step by step saved a lot of time. It also helped me catch the difference between features that look useful and features that actually discriminate, like how tempo and danceability seemed important at first but turned out to be redundant with energy in a small dataset.
-
-The times I needed to double-check were when the suggestions sounded confident but I had not verified them against the actual data yet. For example, the valence lookup table was suggested based on what moods should feel like in general, but I had to manually check it against the actual song values in songs.csv to make sure the numbers made sense. Trusting the reasoning without checking the data would have meant building the scoring on assumptions instead of evidence.
-
-**What surprised you about how simple algorithms can still "feel" like recommendations?**
-
-I was genuinely surprised by how much the standard profiles felt right even though the logic is basically just addition and subtraction. When I ran the lofi listener profile and saw Library Rain, Midnight Coding, and Focus Flow come out as the top three in that exact order, it felt like the system actually understood something about that user. But looking at the code, it was just doing (1 - |gap|) times a weight for each feature. There is no understanding at all. It is just numbers that happen to line up with what a human would expect. That gap between what the output looks like and what is actually happening inside the code is probably the most important thing I learned from this whole project. It made me much more skeptical about trusting AI outputs in general just because they feel right.
-
-**What would you try next if you extended this project?**
-
-The first thing I would do is expand the catalog significantly, aiming for at least 5 to 10 songs per genre so the numeric features can actually separate candidates within a genre instead of just handing the win to the only available song. After that I would add an explicit valence field to the user profile so users can say directly how emotionally positive or dark they want the music to feel, rather than having the system guess from mood. I would also add a diversity rule to the ranking step so no genre appears more than twice in a top-5 list, which would reduce the filter bubble effect. And eventually I would love to try adding a simple collaborative filtering layer where the system looks at what other similar users listened to, not just the song features, to see if it could discover connections that pure content-based scoring would miss.
+6. **Cross-cultural evaluation of the handwritten corpus.** Ask people from different musical backgrounds whether the `song_notes` actually match their experience of the songs. Right now the corpus reflects a sample of one.
