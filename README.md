@@ -1,240 +1,243 @@
-# 🎵 Music Recommender Simulation
+# 🎵 VibeFinder 2.0: Music Recommender with Agentic Reasoning
 
-## Project Summary
+**Module 4 Final Project, CodePath AI 110**  
+Author: Ashley Qu
 
-In this project you will build and explain a small music recommender system.
+VibeFinder 2.0 is a rule-based music recommender built as a multi-stage agent. Given either a structured preference dict or a free-form query like `"chill lofi for studying"`, it parses the input, scores 18 songs from a catalog, retrieves custom-written context from two document sources, runs a self-critique loop that can rerank results when something looks off, and returns a top-5 list with prose explanations.
 
-Your goal is to:
-
-- Represent songs and a user "taste profile" as data
-- Design a scoring rule that turns that data into recommendations
-- Evaluate what your system gets right and wrong
-- Reflect on how this mirrors real world AI recommenders
-
-VibeFinder 1.0 is a content-based music recommender that scores each song in an 18-song catalog against a user taste profile and returns the top 5 matches with a plain-language explanation. The user profile stores four preferences: favorite genre, favorite mood, target energy level, and whether they like acoustic music. Each song is scored out of 9.0 using a two-layer formula: exact genre and mood matches earn flat bonuses (genre +3.0, mood +2.0), while energy, acousticness, and valence are scored by proximity to the user's target. Songs are then sorted from highest to lowest and the top 5 are returned.
+There is no LLM call anywhere in the pipeline. The "agent" here is a rule chain with observable decision points, which keeps it deterministic, reproducible, and free to run.
 
 ---
 
-## How The System Works
+## 🧱 Base Project
 
-Real-world recommenders like Spotify actually use two big approaches: collaborative filtering, which looks at what other users with similar taste are listening to, and content-based filtering, which looks at the song itself, things like how energetic it is, what genre it belongs to, or how "happy" it sounds. Spotify actually combines both, but for this project I focused on content-based filtering because it is easier to reason about and does not require data from other users.
+The original project is **VibeFinder 1.0** from Module 3. It is a content-based recommender that scores each song in an 18-song catalog against a user profile (favorite genre, favorite mood, target energy, acoustic preference) using a hand-tuned weighted formula out of 9.0 points. The top-5 is returned with a short reason string per song.
 
-Explain your design in plain language.
+Full Module 3 documentation (the scoring formula breakdown, experiment log, bias analysis, and per-profile output screenshots) is preserved at [`docs/MODULE_3_ORIGINAL.md`](docs/MODULE_3_ORIGINAL.md).
 
-Some prompts to answer:
-
-- What features does each `Song` use in your system
-  - For example: genre, mood, energy, tempo
-  - My `Song` objects use five features: `genre` (e.g. pop, lofi, rock), `mood` (e.g. happy, chill, intense), `energy` (a float from 0.0 to 1.0 measuring intensity), `acousticness` (how acoustic vs. electronic the track is), and `valence` (how musically positive or happy it sounds). I left out `tempo_bpm` and `danceability` because they turned out to be redundant with energy for this small dataset.
-
-- What information does your `UserProfile` store
-  - The `UserProfile` stores four things: `favorite_genre`, `favorite_mood`, `target_energy` (a float representing the energy level the user wants), and `likes_acoustic` (a boolean for whether they prefer acoustic music). These map directly to the song features so the scorer can compare them one-to-one.
-
-- How does your `Recommender` compute a score for each song
-  - The scorer gives each song a number out of 9.0. Genre and mood matches give flat bonuses (genre is worth more at 3.0 vs. mood at 2.0, because a wrong genre feels the most "off" no matter what). The three numeric features use a proximity formula `1 - |song value - user target|` so songs closer to the user's preference always score higher, not songs that are simply louder or faster. Energy is weighted at 2.0 since it has the widest spread in the dataset; acousticness and valence are each weighted at 1.0 as tiebreakers.
-
-- How do you choose which songs to recommend
-  - Once every song has a score, the ranking step sorts the full list from highest to lowest and returns the top k results. I kept scoring and ranking as two separate steps on purpose, the scorer only looks at one song at a time and produces a number, while the ranker sees the whole list and decides what to actually show the user.
-
-You can include a simple diagram or bullet list if helpful.
-
-See [flowchart.md](flowchart.md) for the full data flow diagram (Input → Process → Output).
+VibeFinder 2.0 treats the Module 3 scorer as a trusted tool the agent calls. The scoring logic was not rewritten. The only change to `src/recommender.py` is one additive line in `load_songs` that surfaces a new `song_notes` column for the RAG layer, and the scoring formula itself is unchanged.
 
 ---
 
-### Finalized Algorithm Recipe
+## 🚀 What's New in Module 4
 
-Every song gets a score out of **9.0 points**, calculated in two layers:
+Five additions wrapped around the Module 3 baseline:
 
-**Layer 1 — Categorical matches (max 5.0)**
+1. **Parser** (`src/parser.py`): accepts structured dicts *or* free-form English queries. Enforces input guardrails (energy in `[0, 1]`, known moods, catalog-present genres).
 
-| Signal | Points | Why this weight |
-|--------|--------|----------------|
-| Genre matches user's favorite genre | +3.0 | A wrong genre feels broken regardless of how well other features match, it gets the highest weight |
-| Mood matches user's favorite mood | +2.0 | Same genre can serve very different moments; mood captures context genre alone can't |
+2. **Multi-source RAG corpus** (`data/songs.csv` + `data/mood_guides.csv`): two hand-written document sources. Every song has a 1 to 2 sentence custom description. Every mood has a context blurb. Generated from a versioned script (`build_data.py`), not templated.
 
-**Layer 2 — Numeric proximity (max 4.0)**
+3. **Explainer with dual modes** (`src/explainer.py`): produces prose per recommendation. RAG mode injects `song_notes` and `mood_guide` content; baseline mode uses only structured columns. The dual design is what makes RAG's impact measurable (see Testing Summary).
 
-Each feature uses the formula `(1 - |song value - user target|) × weight`, so songs closer to the user's preference always score higher, not songs that are simply louder or faster.
+4. **Rule-based Self-Critic + Rerank** (`src/critic.py`): four checks on the top-5 (`mood_valence_conflict`, `missing_genre`, `acoustic_violation`, `low_diversity`), each with its own retryability flag. Retryable failures trigger a single rerank pass on the full candidate pool using critic-supplied hints (soft penalties for valence and diversity; hard filter for acoustic).
 
-| Signal | Weight | Max pts | Why this weight |
-|--------|--------|---------|----------------|
-| Energy proximity | ×2.0 | 2.0 | Widest spread in the dataset (0.22–0.97); most discriminating numeric feature |
-| Acousticness proximity | ×1.0 | 1.0 | Maps directly to the `likes_acoustic` boolean in the user profile |
-| Valence proximity | ×1.0 | 1.0 | Most emotionally independent signal; inferred from the user's favorite mood |
+5. **Agent orchestrator** (`src/agent.py` + CLI `src/agent_runner.py`): ties it all together. Max 1 retry. Residual issues after retry are surfaced to the user, not suppressed.
 
-A song that matches both genre and mood starts with 5.0 points before any numeric scoring, meaning a wrong-genre song can never outscore a correct-genre song purely through numeric similarity (max 4.0). This was a deliberate design choice.
+Plus a behavioral and RAG-metric test harness in `evaluate.py`.
 
 ---
 
-### Potential Biases
+## 🏗 System Architecture
 
-- **Genre over-prioritization:** Because genre carries 3.0 points, a song from the right genre will almost always outrank a song from a different genre, even if the other song matches the user's mood, energy, and acousticness perfectly. A great ambient song could be invisible to a pop user even if it fits their energy target exactly.
+![System architecture](assets/architecture.png)
 
-- **Mood-valence inference is imprecise:** Valence is inferred from the user's favorite mood using a fixed lookup table rather than being set explicitly. For moods like "intense" where Storm Runner (valence 0.48) and Gym Hero (valence 0.77) are both valid but feel emotionally very different, the inferred target (0.60) splits the difference and treats both songs as roughly equal, which may not match what the user actually wants.
+Gray dashed boxes are Module 3 components retained as-is. Blue boxes are Module 4 additions. Green cylinders are the RAG data sources. The yellow diamond is the Critic's decision point. The pink section is the test harness, which calls the whole chain end-to-end.
 
-- **No history or feedback:** The system treats every session identically. It has no memory of what the user has already heard, skipped, or loved. A song that scored highly last time will score the same way every time, even if the user is tired of it.
+**Happy path**: user query → Parser validates → Module 3 scorer ranks all 18 songs → Explainer adds RAG context to the top-5 → Critic approves → output.
 
-- **Small catalog amplifies errors:** With only 18 songs, a single wrong weight can put the wrong song at rank 1. In a real system with thousands of songs, a slightly miscalibrated weight averages out, here it does not.
+**Retry path**: if the Critic rejects the top-5 on a retryable rule, the agent reweights and reranks the full candidate pool, then runs the Critic once more for transparency (not a second retry). Max 1 retry.
+
+**Guardrail path**: Parser rejects malformed input and short-circuits to the output with a human-readable error.
+
+Mermaid source: [`assets/architecture.md`](assets/architecture.md).
 
 ---
 
-## Getting Started
+## ⚙️ Setup & Run
 
-### Setup
-
-1. Create a virtual environment (optional but recommended):
-
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate      # Mac or Linux
-   .venv\Scripts\activate         # Windows
-
-2. Install dependencies
+Python 3.9+ is required. No external packages needed for the core agent.
 
 ```bash
+git clone https://github.com/Ashleyyq/ai110-module4show-applied-ai-system-project.git
+cd ai110-module4show-applied-ai-system-project
+
+# Optional: install requirements (only needed for the legacy Streamlit UI)
 pip install -r requirements.txt
-```
 
-3. Run the app:
-
-```bash
+# Module 3 baseline (sanity check, same output as before)
 python -m src.main
+
+# Module 4 agent
+python -m src.agent_runner                                     # all 6 profiles
+python -m src.agent_runner --profile D                         # one profile
+python -m src.agent_runner --query "high-energy rock for gym"  # free-form NL
+python -m src.agent_runner --profile B --no-rag                # baseline Explainer
+python -m src.agent_runner --profile B --quiet                 # hide internal logs
+
+# Test harness
+python evaluate.py                                             # pass/fail + RAG metrics
+python evaluate.py --verbose                                   # include agent logs
+
+# Rebuild CSV data (only needed if you edit build_data.py)
+python build_data.py
 ```
 
-### Running Tests
+---
 
-Run the starter tests with:
+## 💡 Sample Interactions
 
-```bash
-pytest
+Three runs that together cover the main behaviors: critic triggering a productive rerank, critic choosing *not* to retry, and natural-language input.
+
+### Example 1: Profile D (sad but energetic). Critic catches the bias.
+
+Input:
+```
+favorite_genre = edm
+favorite_mood  = sad
+target_energy  = 0.90
+likes_acoustic = False
 ```
 
-You can add more tests in `tests/test_recommender.py`.
+The Module 3 baseline gives this user "Drop Zone" at #1, which is an EDM song with valence 0.82 and a mood label of "euphoric". That is clearly wrong for someone who said their mood is sad. The root cause is that the +3.0 genre bonus overwhelms the valence mismatch in the linear scoring formula.
+
+The agent catches it:
+
+```
+[PARSER] structured → genre='edm' mood='sad' energy=0.9 acoustic=False | valid=True
+[SCORER] scored 18 songs; top-1 = 'Drop Zone' score=6.31
+[CRITIC] ⚠️  fail: ['mood_valence_conflict'] → retry with {'valence_penalty_weight': 5.0}
+[AGENT] retry 1/1 — applying hints
+[CRITIC] reranking 18 candidates
+[CRITIC] ⚠️  fail: ['acoustic_violation']
+[AGENT] residual issues after retry — 1-retry cap honored, surfacing to user
+```
+
+Result:
+```
+#1  Empty Chairs    (soul,  sad,      valence 0.28, score 4.05)
+#2  Drop Zone       (edm,   euphoric, valence 0.82, score 3.61)
+#3  Iron Collapse   (metal, angry,    valence 0.22, score 3.46)
+...
+
+⚠️  Residual issues after retry (1-retry cap, surfaced):
+    · User likes_acoustic=False but Empty Chairs has acousticness=0.81
+```
+
+"Empty Chairs" moves to #1 and is actually a sad song. "Drop Zone" drops to #2. The agent also honestly flags that "Empty Chairs" violates the non-acoustic preference. The user's profile is partially self-contradictory (being simultaneously sad, EDM-loving, high-energy, and non-acoustic isn't satisfiable in an 18-song catalog), so the agent reports the trade-off instead of pretending it solved everything.
+
+### Example 2: Profile E (country). Critic chooses not to retry.
+
+Input:
+```
+favorite_genre = country
+favorite_mood  = relaxed
+target_energy  = 0.38
+likes_acoustic = True
+```
+
+No country songs exist in the catalog. The critic flags `missing_genre` as a warning, not a failure, because no amount of rescoring can conjure a missing genre. It does not trigger a retry:
+
+```
+ℹ️   Critic warnings:
+    · Genre 'country' is not present in the catalog. Recommendations fell 
+      back to mood + numeric proximity.
+
+#1  Coffee Shop Stories   Slow Stereo   (jazz, relaxed, score 5.81)
+#2  Library Rain          Paper Lanterns (lofi, chill,  score 3.75)
+#3  Spacewalk Thoughts    Orbit Bloom   (ambient, chill, score 3.72)
+```
+
+This is a deliberate choice. Pretending to "fix" a structural limit would be more dishonest than simply telling the user "we don't have country".
+
+### Example 3: Natural-language query.
+
+Input: `"high-energy rock for the gym"`
+
+```
+[PARSER] nl 'high-energy rock for the gym' → genre='rock' mood='energetic' 
+         energy=0.88 acoustic=False | valid=True
+[SCORER] scored 18 songs; top-1 = 'Storm Runner' score=6.60
+[CRITIC] ✅ pass (all checks clean)
+
+#1  Storm Runner, Voltline (score 6.60)
+    "Driving guitars with no quiet moments. A straight shot of adrenaline 
+     for workouts where you'd rather not think. The 'energetic' mood family:
+     High-arousal territory meant to push effort output. Less emotional 
+     than intense, more task-oriented. Genre matches (rock); the mood is 
+     intense rather than your preferred energetic. Energy (0.91) is very 
+     close to your target (0.88)."
+```
+
+The parser maps "high-energy" to energy≈0.88, "rock" to genre=rock, and "gym" to mood=energetic. Critic passes cleanly on the first try. The RAG-enhanced explanation pulls from both `song_notes` (the "driving guitars" sentence) and `mood_guides` (the "'energetic' mood family:" sentence).
 
 ---
 
-## Experiments You Tried
+## ✅ Testing Summary
 
-Use this section to document the experiments you ran. For example:
+`evaluate.py` runs 8 behavioral assertions and a RAG-vs-baseline comparison across 6 profiles.
 
-- What happened when you changed the weight on genre from 2.0 to 0.5
-  - I cut the genre bonus from 3.0 to 1.5 and doubled the energy weight from 2.0 to 4.0 to see if numeric features could beat genre dominance. The rankings barely changed. Storm Runner was still number one for the rock fan and Library Rain was still number one for the lofi listener. The problem is not the weights. The real issue is that only one rock song and one lofi song exist in the catalog, so there is nothing for the numeric features to separate inside a genre.
-- What happened when you added tempo or valence to the score
-  - I added valence (weight 1.0, inferred from mood via a lookup table) and acousticness (weight 1.0) to the scoring. This changed individual scores slightly but rarely changed the rank order, because the genre and mood bonuses together are still large enough to dominate when they both match. Valence was the more interesting addition because it helped expose the sad EDM bias where the system recommended a euphoric song to a user who wanted sad music.
-- How did your system behave for different types of users
-  - Standard profiles worked well. The lofi listener got three lofi songs at the top and the pop dancer got the only pop plus happy song at number one. Adversarial profiles showed the limits. The sad EDM user got a euphoric song as the top result because genre matched. The country fan found no genre matches but the fallback to mood and energy still gave reasonable results. The acoustic rocker kept getting Storm Runner at number one because the genre and mood bonuses were too high for the acousticness preference to override.
+```
+BEHAVIORAL TESTS (8)
+────────────────────────────────────────────────────────
+[ PASS ] A  rock/intense standard          clean pass
+[ PASS ] B  lofi/chill standard            clean pass
+[ PASS ] C  pop/happy standard             clean pass
+[ PASS ] D  sad/EDM adversarial            retry fired (mood_valence_conflict)
+[ PASS ] E  missing genre (country)        clean pass with warnings
+[ PASS ] F  acoustic rocker adversarial    retry fired (acoustic_violation)
+[ PASS ] G  NL: high-energy rock for gym   clean pass
+[ PASS ] H  gibberish input (guardrail)    guardrail rejected
+Total: 8 / 8 passed
 
-### Sample Output — pop/happy profile
+RAG vs BASELINE (mean across 6 profiles)
+────────────────────────────────────────────────────────
+Metric                          Baseline    RAG       Δ
+Avg explanation length (words)   34.9      71.0    +104%
+Unique vocab tokens              71.7     145.0    +102%
+Recs referencing song_notes       0%       100%
+Recs referencing mood_guides      0%       100%
+```
 
-Running `python -m src.main` with the `pop_dancer` profile (genre=pop, mood=happy, energy=0.85, acoustic=no):
+Per-profile length deltas range from +92% (Profile E) to +118% (Profile B). The RAG improvement is consistent, not driven by any single profile.
 
-![Terminal output showing top 5 recommendations for a pop/happy user profile](Screenshot%202026-04-12%20at%2010.26.30%20PM.png)
+**What testing caught during development.** A duplicate-definition bug in `recommender.py` where a stub `score_song` at the bottom of the file was silently shadowing the working implementation. My original Module 3 test suite did not catch this because the tests imported the unfinished OOP classes (`Song`, `UserProfile`, `Recommender`), while the live code path used the procedural `score_song` and `recommend_songs` pair. The tests were targeting dead code. The new `evaluate.py` calls the full pipeline end-to-end, so a shadowed stub would not survive a single run.
 
-The results match expectations:
-- **#1 Sunrise City** — only song with both genre (`pop`) and mood (`happy`) matching, scores 8.72 / 9.0
-- **#2 Gym Hero** — genre matches (`pop`) but mood is `intense` not `happy`, drops to 6.76
-- **#3 Rooftop Lights** — mood matches (`happy`) but genre is `indie pop` not `pop`, sits at 5.46 — confirming genre (weight 3.0) outranks mood (weight 2.0) as designed
-- **#4 and #5** — no categorical matches at all, ranked purely by energy and acousticness proximity
-
----
-
-### Stress Test — All 6 Profiles
-
-Running `python -m src.main` with `RUN_ALL = True` executes three standard and three adversarial profiles back to back.
-
----
-
-#### Profile A — High-Energy Rock Fan (Standard)
-
-`genre=rock | mood=intense | energy=0.88 | acoustic=no`
-
-![Profile A terminal output](profile%20recommendations%20screenshots/Screenshot%202026-04-12%20at%2010.37.07%20PM.png)
-
-Storm Runner scores 8.72 — the only song with both genre and mood matching. Gym Hero (#2, 5.68) gains the mood bonus only; no other song comes close to the top.
+**What testing did not catch.** The NL parser has a "silence means False" issue. If a user types `"chill lofi for studying"` without explicitly mentioning acoustic preference, the parser defaults `likes_acoustic=False`. The critic then honestly enforces that default, which is internally consistent but may not match what the user actually intended. This is a real limitation of rule-based NL parsing and is documented in the model card.
 
 ---
 
-#### Profile B — Chill Lofi Listener (Standard)
+## 🎨 Design Decisions & Trade-offs
 
-`genre=lofi | mood=chill | energy=0.38 | acoustic=yes`
+**Rule-based, not LLM-backed.** The entire agent is deterministic. No API calls, no keys to configure, no inference latency, no cost. Anyone who clones the repo can run everything immediately, and the test harness is stable across runs. The trade-off is that "reasoning" here is handcrafted rules rather than emergent behavior, and the NL parser only handles patterns I explicitly coded.
 
-![Profile B terminal output](profile%20recommendations%20screenshots/Screenshot%202026-04-12%20at%2010.37.16%20PM.png)
+**Not every critic failure triggers a retry.** `missing_genre` is non-retryable by design. No amount of reweighting can conjure a missing genre, so pretending otherwise would be dishonest. The other three checks are retryable because each maps onto a concrete reweighting action.
 
-Three lofi songs fill the top 3 (Library Rain 8.80, Midnight Coding 8.59, Focus Flow 6.73). Spacewalk Thoughts (#4) earns a spot via mood match despite being ambient — showing mood can partially compensate for a genre miss.
+**Hard filter for acoustic, soft penalty for the rest.** Acousticness gets a hard threshold filter on retry (keep only songs on the user's side of 0.5). Mood-valence conflict gets a soft per-song penalty. A soft penalty alone is not strong enough to overcome the +3.0 genre bonus when the user's preferred genre is entirely non-acoustic. Verified on Profile F: with a penalty-only approach, Storm Runner (rock, acousticness 0.10) still wins against genuinely acoustic candidates. With the hard filter, the top-5 correctly switches to acousticness ≥ 0.5.
 
----
+**1-retry cap, even when issues remain.** Profile D exposes why this is right. After the first retry fixes the mood-valence conflict, the new top-1 triggers a different critic issue (acoustic violation). Looping indefinitely would be dishonest, because the user's profile itself is partially self-contradictory. The agent commits to its best effort after one retry and surfaces the remaining trade-off.
 
-#### Profile C — Upbeat Pop Dancer (Standard)
-
-`genre=pop | mood=happy | energy=0.85 | acoustic=no`
-
-![Profile C terminal output](profile%20recommendations%20screenshots/Screenshot%202026-04-12%20at%2010.37.26%20PM.png)
-
-Sunrise City wins with 8.72. Gym Hero (#2, 6.76) beats Rooftop Lights (#3, 5.46) because genre match (+3.0) outweighs mood match (+2.0) — confirming the weight ratio is working as designed.
+**Reranked scores can be lower than baseline scores, and that is correct.** Profile F's reranked top-5 all score around 2.7, versus the baseline max of 7.96. The rerank filtered away the songs that were piling up genre+mood bonuses. Lower score does not mean worse recommendation. It means the output reflects more of the user's actual constraints.
 
 ---
 
-#### Profile D — Sad but Energetic (Adversarial)
+## 🎥 Demo Video
 
-`genre=edm | mood=sad | energy=0.90 | acoustic=no`
+Loom walkthrough: **[link to be added]**
 
-![Profile D terminal output](profile%20recommendations%20screenshots/Screenshot%202026-04-12%20at%2010.37.36%20PM.png)
-
-**Bias exposed:** Drop Zone (euphoric EDM, valence 0.82) ranks #1 at 6.31 despite the user wanting `mood=sad`. The genre bonus (+3.0) overwhelms the valence mismatch. The genuinely sad song Empty Chairs only reaches #2 at 4.05 — a sad user gets a euphoric recommendation.
-
----
-
-#### Profile E — Genre Ghost / Country (Adversarial)
-
-`genre=country | mood=relaxed | energy=0.38 | acoustic=yes`
-
-![Profile E terminal output](profile%20recommendations%20screenshots/Screenshot%202026-04-12%20at%2010.37.45%20PM.png)
-
-No country songs exist in the catalog — the genre bonus never fires. The system falls back to mood + numeric proximity and surfaces Coffee Shop Stories (jazz, relaxed, 5.81). The fallback behavior is stable even when genre is useless.
+The video shows:
+- End-to-end runs with 3 example inputs (Profile D adversarial, Profile E missing-genre, NL query)
+- Critic retry behavior visible in the `[AGENT]` and `[CRITIC]` log lines
+- `evaluate.py` output with the 8/8 pass table and the RAG metrics
+- Brief discussion of the key design choices
 
 ---
 
-#### Profile F — Acoustic Rocker (Adversarial)
+## 📎 Related Files
 
-`genre=rock | mood=intense | energy=0.90 | acoustic=yes`
-
-![Profile F terminal output](profile%20recommendations%20screenshots/Screenshot%202026-04-12%20at%2010.37.52%20PM.png)
-
-**Bias exposed:** Storm Runner still wins at 7.96 despite scoring only 0.10 on acousticness. The genre + mood categorical ceiling (5.0 pts) is too high to be overridden by a contradictory numeric preference — the `likes_acoustic` flag is effectively ignored when both categorical signals match.
-
----
-
-## Limitations and Risks
-
-Summarize some limitations of your recommender.
-
-Examples:
-
-- It only works on a tiny catalog
-  - The catalog has 18 songs and 13 of the 15 genres have only one song each. This means the genre bonus almost always just picks the one available song in that genre with no variety at all.
-- It does not understand lyrics or language
-  - The system only looks at numeric attributes like energy and acousticness and categorical labels like genre and mood. It has no idea what a song actually sounds like, what the lyrics say, or what language it is in. Two songs can have the same genre and energy but feel completely different, and the system cannot tell them apart.
-- It might over favor one genre or mood
-  - Because genre is worth 3.0 points out of 9.0, a song from the right genre will almost always appear at the top no matter what. In the adversarial testing, a euphoric EDM song ranked number one for a user who wanted sad music purely because the genre matched. The genre bonus is strong enough to override the emotional fit.
-
-You will go deeper on this in your model card.
-
----
-
-## Reflection
-
-Read and complete `model_card.md`:
-
-[**Model Card**](model_card.md)
-
-Write 1 to 2 paragraphs here about what you learned:
-
-- about how recommenders turn data into predictions
-- about where bias or unfairness could show up in systems like this
-
-The most surprising thing I learned is how much a recommender can feel accurate without actually understanding anything. When the lofi listener profile returned three lofi songs in exactly the right order, it genuinely felt like the system knew what that user wanted. But the code is just doing subtraction and comparing numbers. There is no taste, no judgment, and no awareness of what music actually sounds like to a human. That gap between what the output feels like and what is happening inside the code made me realize why it is so easy to over-trust AI systems. They can produce results that seem thoughtful even when the logic underneath is extremely simple.
-
-The biggest lesson about bias came from the adversarial profiles. When a user said their mood was "sad" but their favorite genre was EDM, the system recommended a euphoric dance track because the genre bonus was worth more points than the mood mismatch penalty. The system was not being unfair on purpose, it just could not weigh emotional fit against genre identity the way a human would. That taught me that bias in a recommender does not always come from bad intentions or bad data. Sometimes it comes from a weight being slightly too high, or from a catalog that does not have enough variety to let the right signals win. Small design choices that seem neutral can end up systematically failing certain types of users, and you usually do not notice until you test the edge cases on purpose.
-
-
+| Path | Description |
+|---|---|
+| [`assets/architecture.png`](assets/architecture.png) | System architecture diagram |
+| [`assets/architecture.md`](assets/architecture.md) | Mermaid source for the diagram |
+| [`model_card.md`](model_card.md) | Reflection, bias analysis, AI collaboration log |
+| [`docs/MODULE_3_ORIGINAL.md`](docs/MODULE_3_ORIGINAL.md) | Preserved Module 3 documentation |
+| [`docs/flowchart.md`](docs/flowchart.md) | Original Module 3 data flow diagram |
