@@ -121,7 +121,7 @@ You can add more tests in `tests/test_recommender.py`.
 
 Running `python -m src.main` with the `pop_dancer` profile (genre=pop, mood=happy, energy=0.85, acoustic=no):
 
-![Terminal output showing top 5 recommendations for a pop/happy user profile](module_3_screenshots/Screenshot%202026-04-12%20at%2010.26.30%20PM.png)
+![Terminal output showing top 5 recommendations for a pop/happy user profile](module_3_screenshots/Screenshot%202026-04-12%20at%2010.26.30%E2%80%AFPM.png)
 
 The results match expectations:
 - **#1 Sunrise City**: only song with both genre (`pop`) and mood (`happy`) matching, scores 8.72 / 9.0
@@ -141,7 +141,7 @@ Running `python -m src.main` with `RUN_ALL = True` executes three standard and t
 
 `genre=rock | mood=intense | energy=0.88 | acoustic=no`
 
-![Profile A terminal output](module_3_screenshots/Screenshot%202026-04-12%20at%2010.37.07%20PM.png)
+![Profile A terminal output](module_3_screenshots/Screenshot%202026-04-12%20at%2010.37.07%E2%80%AFPM.png)
 
 Storm Runner scores 8.72, the only song with both genre and mood matching. Gym Hero (#2, 5.68) gains the mood bonus only; no other song comes close to the top.
 
@@ -151,7 +151,7 @@ Storm Runner scores 8.72, the only song with both genre and mood matching. Gym H
 
 `genre=lofi | mood=chill | energy=0.38 | acoustic=yes`
 
-![Profile B terminal output](module_3_screenshots/Screenshot%202026-04-12%20at%2010.37.16%20PM.png)
+![Profile B terminal output](module_3_screenshots/Screenshot%202026-04-12%20at%2010.37.16%E2%80%AFPM.png)
 
 Three lofi songs fill the top 3 (Library Rain 8.80, Midnight Coding 8.59, Focus Flow 6.73). Spacewalk Thoughts (#4) earns a spot via mood match despite being ambient, showing mood can partially compensate for a genre miss.
 
@@ -161,7 +161,7 @@ Three lofi songs fill the top 3 (Library Rain 8.80, Midnight Coding 8.59, Focus 
 
 `genre=pop | mood=happy | energy=0.85 | acoustic=no`
 
-![Profile C terminal output](module_3_screenshots/Screenshot%202026-04-12%20at%2010.37.26%20PM.png)
+![Profile C terminal output](module_3_screenshots/Screenshot%202026-04-12%20at%2010.37.26%E2%80%AFPM.png)
 
 Sunrise City wins with 8.72. Gym Hero (#2, 6.76) beats Rooftop Lights (#3, 5.46) because genre match (+3.0) outweighs mood match (+2.0), confirming the weight ratio is working as designed.
 
@@ -171,7 +171,7 @@ Sunrise City wins with 8.72. Gym Hero (#2, 6.76) beats Rooftop Lights (#3, 5.46)
 
 `genre=edm | mood=sad | energy=0.90 | acoustic=no`
 
-![Profile D terminal output](module_3_screenshots/Screenshot%202026-04-12%20at%2010.37.36%20PM.png)
+![Profile D terminal output](module_3_screenshots/Screenshot%202026-04-12%20at%2010.37.36%E2%80%AFPM.png)
 
 **Bias exposed.** Drop Zone (euphoric EDM, valence 0.82) ranks #1 at 6.31 despite the user wanting `mood=sad`. The genre bonus (+3.0) overwhelms the valence mismatch. The genuinely sad song Empty Chairs only reaches #2 at 4.05, so a sad user gets a euphoric recommendation.
 
@@ -181,7 +181,7 @@ Sunrise City wins with 8.72. Gym Hero (#2, 6.76) beats Rooftop Lights (#3, 5.46)
 
 `genre=country | mood=relaxed | energy=0.38 | acoustic=yes`
 
-![Profile E terminal output](module_3_screenshots/Screenshot%202026-04-12%20at%2010.37.45%20PM.png)
+![Profile E terminal output](module_3_screenshots/Screenshot%202026-04-12%20at%2010.37.45%E2%80%AFPM.png)
 
 No country songs exist in the catalog, so the genre bonus never fires. The system falls back to mood + numeric proximity and surfaces Coffee Shop Stories (jazz, relaxed, 5.81). The fallback behavior is stable even when genre is useless.
 
@@ -191,7 +191,7 @@ No country songs exist in the catalog, so the genre bonus never fires. The syste
 
 `genre=rock | mood=intense | energy=0.90 | acoustic=yes`
 
-![Profile F terminal output](module_3_screenshots/Screenshot%202026-04-12%20at%2010.37.52%20PM.png)
+![Profile F terminal output](module_3_screenshots/Screenshot%202026-04-12%20at%2010.37.52%E2%80%AFPM.png)
 
 **Bias exposed.** Storm Runner still wins at 7.96 despite scoring only 0.10 on acousticness. The genre + mood categorical ceiling (5.0 pts) is too high to be overridden by a contradictory numeric preference; the `likes_acoustic` flag is effectively ignored when both categorical signals match.
 
