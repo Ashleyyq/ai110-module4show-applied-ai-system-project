@@ -1,3 +1,15 @@
+"""
+recommender.py — Module 3 baseline scorer, retained as-is for Module 4.
+
+This is the original content-based scoring engine from Module 3 (VibeFinder 1.0).
+The Module 4 agentic chain treats this module as a trusted "tool" it calls — it
+does not rewrite the scoring logic.
+
+Module 4 made exactly one additive change: `load_songs` now surfaces the new
+`song_notes` column (used by the Explainer's RAG layer) via `row.get(...)`,
+which is backward-compatible with older songs.csv files that lack the column.
+No scoring behavior has been modified.
+"""
 import csv
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
@@ -130,6 +142,11 @@ def load_songs(csv_path: str) -> List[Dict]:
                 "valence":      float(row["valence"]),
                 "danceability": float(row["danceability"]),
                 "acousticness": float(row["acousticness"]),
+                # Module 4 additive extension — carries the custom RAG notes
+                # forward through the scorer untouched. Safe: score_song never
+                # reads it, and downstream RAG consumers default to "" if
+                # missing, so older songs.csv files still work.
+                "song_notes":   row.get("song_notes", ""),
             })
     return songs
 
