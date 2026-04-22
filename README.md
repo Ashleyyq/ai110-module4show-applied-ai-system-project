@@ -222,13 +222,20 @@ Per-profile length deltas range from +92% (Profile E) to +118% (Profile B). The 
 
 ## 🎥 Demo Video
 
-Loom walkthrough: **[link to be added]**
+Loom walkthrough: **https://www.loom.com/share/f01bd4c1998c4556b824cb6a8e244bee**
 
 The video shows:
 - End-to-end runs with 3 example inputs (Profile D adversarial, Profile E missing-genre, NL query)
 - Critic retry behavior visible in the `[AGENT]` and `[CRITIC]` log lines
 - `evaluate.py` output with the 8/8 pass table and the RAG metrics
 - Brief discussion of the key design choices
+
+---
+
+## 🎓 Portfolio Reflection
+
+This project was less about cramming another AI feature into a prototype and more about treating the AI pipeline as a system. The Module 3 scorer worked, but it had latent bugs and no story about when it should be trusted. In Module 4 I broke that single scoring function into five observable stages with a self-critic, deliberate retry rules, and an end-to-end test harness that catches regressions the old test suite silently missed.
+The decisions that took the most thought were the least glamorous ones: which critic failures deserve a retry and which deserve an honest warning, why acoustic preference needs a hard filter while valence gets a soft penalty, when the agent should stop retrying and surface a trade-off to the user. I'm drawn to AI Platform Engineering because those kinds of reliability-shaped questions are where ML systems actually live or die in production.
 
 ---
 
